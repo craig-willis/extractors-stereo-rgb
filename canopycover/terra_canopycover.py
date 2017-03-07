@@ -33,6 +33,18 @@ def determineOutputDirectory(outputRoot, dsname):
 
     return os.path.join(outputRoot, datestamp, timestamp)
 
+def addFileIfNecessaryaddFileIfNecessary(connector, host, secret_key, resource, filepath):
+    # Upload file to a dataset, unless it already exists
+    for f in resource['files']:
+        if 'filename' in f:
+            if f['filepath'] == filepath:
+                return False
+
+    print("Uploading existing file to dataset: %s" % filepath)
+    pyclowder.files.upload_to_dataset(connector, host, secret_key, resource['id'], filepath)
+
+    return True
+
 class CanopyCoverHeight(Extractor):
     def __init__(self):
         Extractor.__init__(self)
@@ -69,42 +81,39 @@ class CanopyCoverHeight(Extractor):
         self.plots_shp = self.args.plots_shp
 
     def check_message(self, connector, host, secret_key, resource, parameters):
-        # Check for a left and right file before beginning processing
-        found_left = False
-        found_right = False
+        img_left, img_right, metadata = None, None, None
 
+        # If there is no _left and _right .bin, ignore
         for f in resource['files']:
-            if 'filename' in f and f['filename'].endswith('_left.bin'):
-                found_left = True
-            elif 'filename' in f and f['filename'].endswith('_right.bin'):
-                found_right = True
-        if not (found_left and found_right):
+            if 'filename' in f:
+                if f['filename'].endswith('_left.bin'):
+                    img_left = f['filename']
+                elif f['filename'].endswith('_right.bin'):
+                    img_right = f['filename']
+        if not (img_left and img_right):
+            logging.info("skipping %s; left & right not found" % resource['id'])
             return CheckMessage.ignore
 
         # Check if output already exists
-        out_dir = determineOutputDirectory(self.output_dir, resource['dataset_info']['name'])
         if not self.force_overwrite:
+            out_dir = determineOutputDirectory(self.output_dir, resource['dataset_info']['name'])
             outfile = os.path.join(out_dir, 'CanopyCoverTraits.csv')
             if os.path.isfile(outfile):
-                logging.info("skipping dataset %s, output already exists" % resource['id'])
+                addFileIfNecessaryaddFileIfNecessary(connector, host, secret_key, resource, outfile)
+
+                logging.info("skipping %s, output already exists" % resource['id'])
                 return CheckMessage.ignore
 
-        # fetch metadata from dataset to check if we should remove existing entry for this extractor first
-        md = pyclowder.datasets.download_metadata(connector, host, secret_key,
-                                                  resource['id'], self.extractor_info['name'])
-        found_meta = False
-        for m in md:
-            if 'agent' in m and 'name' in m['agent']:
-                if m['agent']['name'].find(self.extractor_info['name']) > -1:
-                    logging.info("skipping dataset %s, metadata already exists" % resource['id'])
-                    return CheckMessage.ignore
-            # Check for required metadata before beginning processing
-            if 'content' in m and 'lemnatec_measurement_metadata' in m['content']:
-                found_meta = True
+        # Check if we have the necessary metadata for the dataset also
+        meta_json = pyclowder.datasets.download_metadata(connector, host, secret_key, resource['id'])
+        for md in meta_json:
+            if 'lemnatec_measurement_metadata' in md['content']:
+                metadata = True
 
-        if found_left and found_right and found_meta:
+        if img_left and img_right and metadata:
             return CheckMessage.download
         else:
+            logging.info("skipping %s; metadata not found" % resource['id'])
             return CheckMessage.ignore
 
     def process_message(self, connector, host, secret_key, resource, parameters):
@@ -153,26 +162,13 @@ class CanopyCoverHeight(Extractor):
         trait_list = ccCore.generate_traits_list(traits)
 
         # generate datapoint for geostreams
-        self.prepareDatapoint(connector, host, secret_key, resource, metadata, fields, trait_list)
+        self.prepareDatapoint(connector, host, secret_key, resource, traits)
 
         # generate output CSV & send to Clowder + BETY
         ccCore.generate_cc_csv(outfile, fields, trait_list)
         logging.info("...uploading CSV to Clowder")
         pyclowder.files.upload_to_dataset(connector, host, secret_key, resource['id'], outfile)
         self.submitToBety(outfile)
-
-        # Tell Clowder this is completed so subsequent file updates don't daisy-chain
-        metadata = {
-            # TODO: Generate JSON-LD context for additional fields
-            "@context": ["https://clowder.ncsa.illinois.edu/contexts/metadata.jsonld"],
-            "dataset_id": resource['id'],
-            "content": {"status": "COMPLETED"},
-            "agent": {
-                "@type": "cat:extractor",
-                "extractor_id": host + "/api/extractors/" + self.extractor_info['name']
-            }
-        }
-        pyclowder.datasets.upload_metadata(connector, host, secret_key, resource['id'], metadata)
 
     def submitToBety(self, csvfile):
         if self.bety_url != "":
@@ -188,7 +184,7 @@ class CanopyCoverHeight(Extractor):
                 print("Error uploading CSV to BETYdb %s" % r.status_code)
                 print(r.text)
 
-    def prepareDatapoint(self, connector, host, secret_key, resource, metadata, trait_names, trait_values):
+    def prepareDatapoint(self, connector, host, secret_key, resource, metadata):
         # Pull positional information from metadata
         gantry_x, gantry_y, loc_cambox_x, loc_cambox_y, fov_x, fov_y, ctime = fetch_md_parts(metadata)
 
