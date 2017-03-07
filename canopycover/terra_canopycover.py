@@ -16,6 +16,7 @@ from pyclowder.extractors import Extractor
 from pyclowder.utils import CheckMessage
 import pyclowder.files
 import pyclowder.datasets
+import pyclowder.geostreams
 
 import canopyCover as ccCore
 import plotid_by_latlon
@@ -167,7 +168,7 @@ class CanopyCoverHeight(Extractor):
         trait_list = ccCore.generate_traits_list(traits)
 
         # generate datapoint for geostreams
-        self.prepareDatapoint(connector, host, secret_key, resource, traits)
+        self.prepareDatapoint(connector, host, secret_key, resource, metadata, traits)
 
         # generate output CSV & send to Clowder + BETY
         ccCore.generate_cc_csv(outfile, fields, trait_list)
@@ -189,9 +190,11 @@ class CanopyCoverHeight(Extractor):
                 print("Error uploading CSV to BETYdb %s" % r.status_code)
                 print(r.text)
 
-    def prepareDatapoint(self, connector, host, secret_key, resource, metadata):
+    def prepareDatapoint(self, connector, host, secret_key, resource, metadata, traits):
         # Pull positional information from metadata
         gantry_x, gantry_y, loc_cambox_x, loc_cambox_y, fov_x, fov_y, ctime = fetch_md_parts(metadata)
+
+        print(gantry_x, gantry_y, loc_cambox_x, loc_cambox_y, fov_x, fov_y, ctime)
 
         # Convert positional information; see terra.sensorposition extractor for more details
         SE_latlon = (33.0745, -111.97475)
@@ -213,58 +216,48 @@ class CanopyCoverHeight(Extractor):
             fileIdList.append(f['id'])
 
         # SENSOR is the plot
-        plot_info = plotid_by_latlon.plotQuery(self.plots_shp, sensor_latlon[1], sensor_latlon[0])
-        plot_name = "Range "+plot_info['plot'].replace("-", " Pass ")
-        logging.info("...found plot: "+str(plot_info))
-        sensor_id = get_sensor_id(host, secret_key, plot_name)
-        if not sensor_id:
-            sensor_id = create_sensor(host, secret_key, plot_name, {
-                "type": "Point",
-                "coordinates": [plot_info['point'][1], plot_info['point'][0], plot_info['point'][2]]
-            })
+        sensor_data = pyclowder.geostreams.get_sensors_by_circle(connector, host, secret_key,
+                                                                sensor_latlon[1], sensor_latlon[0], 0.01)
+        if not sensor_data:
+            plot_info = plotid_by_latlon.plotQuery(self.plots_shp, sensor_latlon[1], sensor_latlon[0])
+            plot_name = "Range "+plot_info['plot'].replace("-", " Pass ")
+            logging.info("...creating plot: "+str(plot_info))
+            sensor_id = pyclowder.geostreams.create_sensor(connector, host, secret_key, plot_name,{
+                    "type": "Point",
+                    "coordinates": [plot_info['point'][1], plot_info['point'][0], plot_info['point'][2]]
+                }, {
+                   "id": "MAC Field Scanner",
+                   "title": "MAC Field Scanner",
+                   "sensorType": 4
+               }, "Maricopa")
+
+        else:
+            sensor_id = sensor_data['id']
+            plot_name = sensor_data['name']
 
         # STREAM is plot x instrument
         stream_name = "Canopy Cover" + " - " + plot_name
-        stream_id = get_stream_id(host, secret_key, stream_name)
-        if not stream_id:
-            stream_id = create_stream(host, secret_key, sensor_id, stream_name, {
+        stream_data = pyclowder.geostreams.get_stream_by_name(connector, host, secret_key, stream_name)
+        if not stream_data:
+            stream_id = pyclowder.geostreams.create_stream(connector, host, secret_key, stream_name, sensor_id, {
                 "type": "Point",
                 "coordinates": [sensor_latlon[1], sensor_latlon[0], 0]
             })
+        else: stream_id = stream_data['id']
 
         logging.info("posting datapoint to stream %s" % stream_id)
         metadata["sources"] = host+"datasets/"+resource['id']
         metadata["file_ids"] = ",".join(fileIdList)
-
         # Format time properly, adding UTC if missing from Danforth timestamp
         time_obj = time.strptime(ctime, "%m/%d/%Y %H:%M:%S")
         time_fmt = time.strftime('%Y-%m-%dT%H:%M:%S', time_obj)
         if len(time_fmt) == 19:
             time_fmt += "-06:00"
 
-        # Actual data to be sent to Geostreams
-        body = {"start_time": time_fmt,
-                "end_time": time_fmt,
-                "type": "Point",
-                # TODO: Make this send the FOV polygon once Clowder supports it
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [sensor_latlon[1], sensor_latlon[0], 0]
-                },
-                "properties": metadata,
-                "stream_id": str(stream_id)
-                }
-
-        # Make the POST
-        r = requests.post(os.path.join(host,'api/geostreams/datapoints?key=%s' % secret_key),
-                          data=json.dumps(body),
-                          headers={'Content-type': 'application/json'})
-
-        if r.status_code != 200:
-            logging.error("Could not add datapoint to stream : [%s]" %  r.status_code)
-        else:
-            logging.info("successfully added datapoint")
-        return
+        pyclowder.geostreams.create_datapoint(connector, host, secret_key, stream_id, {
+            "type": "Point",
+            "coordinates": [sensor_latlon[1], sensor_latlon[0], 0]
+        }, time_fmt, time_fmt, traits)
 
 def load_json(meta_path):
     try:
