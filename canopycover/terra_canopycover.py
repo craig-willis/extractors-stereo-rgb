@@ -55,6 +55,9 @@ class CanopyCoverHeight(Extractor):
         self.parser.add_argument('--output', '-o', dest="output_dir", type=str, nargs='?',
                                  default="/home/extractor/sites/ua-mac/Level_1/demosaic",
                                  help="root directory where timestamp & output directories will be created")
+        self.parser.add_argument('--mongo', dest="mongo_storage", type=str, nargs='?',
+                                 default=False,
+                                 help="if true, ignore file path logic because paths are mongo upload paths")
         self.parser.add_argument('--overwrite', dest="force_overwrite", type=bool, nargs='?', default=False,
                                  help="whether to overwrite output file if it already exists in output directory")
         self.parser.add_argument('--betyURL', dest="bety_url", type=str, nargs='?',
@@ -75,6 +78,7 @@ class CanopyCoverHeight(Extractor):
 
         # assign other arguments
         self.output_dir = self.args.output_dir
+        self.mongo_storage = self.args.mongo_storage
         self.force_overwrite = self.args.force_overwrite
         self.bety_url = self.args.bety_url
         self.bety_key = self.args.bety_key
@@ -99,7 +103,8 @@ class CanopyCoverHeight(Extractor):
             out_dir = determineOutputDirectory(self.output_dir, resource['dataset_info']['name'])
             outfile = os.path.join(out_dir, 'CanopyCoverTraits.csv')
             if os.path.isfile(outfile):
-                addFileIfNecessaryaddFileIfNecessary(connector, host, secret_key, resource, outfile)
+                if not self.mongo_storage:
+                    addFileIfNecessaryaddFileIfNecessary(connector, host, secret_key, resource, outfile)
 
                 logging.info("skipping %s, output already exists" % resource['id'])
                 return CheckMessage.ignore

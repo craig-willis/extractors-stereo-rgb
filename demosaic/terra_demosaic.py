@@ -35,7 +35,7 @@ def determineOutputDirectory(outputRoot, dsname):
 def addFileIfNecessaryaddFileIfNecessary(connector, host, secret_key, resource, filepath):
     # Upload file to a dataset, unless it already exists
     for f in resource['files']:
-        if 'filename' in f:
+        if 'filepath' in f:
             if f['filepath'] == filepath:
                 return False
 
@@ -54,8 +54,12 @@ class StereoBin2JpgTiff(Extractor):
         self.parser.add_argument('--output', '-o', dest="output_dir", type=str, nargs='?',
                                  default="/home/extractor/sites/ua-mac/Level_1/demosaic",
                                  help="root directory where timestamp & output directories will be created")
+        self.parser.add_argument('--mongo', dest="mongo_storage", type=str, nargs='?',
+                                 default=False,
+                                 help="if true, ignore file path logic because paths are mongo upload paths")
         self.parser.add_argument('--overwrite', dest="force_overwrite", type=bool, nargs='?', default=False,
                                  help="whether to overwrite output file if it already exists in output directory")
+
 
         # parse command line and load default logging configuration
         self.setup()
@@ -66,6 +70,7 @@ class StereoBin2JpgTiff(Extractor):
 
         # assign other arguments
         self.output_dir = self.args.output_dir
+        self.mongo_storage = self.args.mongo_storage
         self.force_overwrite = self.args.force_overwrite
 
     def check_message(self, connector, host, secret_key, resource, parameters):
@@ -95,10 +100,11 @@ class StereoBin2JpgTiff(Extractor):
             # If they exist, check if outputs are already in the dataset, and add them if not
             if (os.path.isfile(left_jpg) and os.path.isfile(right_jpg) and
                     os.path.isfile(left_tiff) and os.path.isfile(right_tiff)):
-                addFileIfNecessaryaddFileIfNecessary(connector, host, secret_key, resource, left_jpg)
-                addFileIfNecessaryaddFileIfNecessary(connector, host, secret_key, resource, right_jpg)
-                addFileIfNecessaryaddFileIfNecessary(connector, host, secret_key, resource, left_tiff)
-                addFileIfNecessaryaddFileIfNecessary(connector, host, secret_key, resource, right_tiff)
+                if not self.mongo_storage:
+                    addFileIfNecessaryaddFileIfNecessary(connector, host, secret_key, resource, left_jpg)
+                    addFileIfNecessaryaddFileIfNecessary(connector, host, secret_key, resource, right_jpg)
+                    addFileIfNecessaryaddFileIfNecessary(connector, host, secret_key, resource, left_tiff)
+                    addFileIfNecessaryaddFileIfNecessary(connector, host, secret_key, resource, right_tiff)
 
                 logging.info("skipping %s, outputs already exist" % resource['id'])
                 return CheckMessage.ignore
