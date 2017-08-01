@@ -7,86 +7,60 @@ import subprocess
 
 import datetime
 from dateutil.parser import parse
-from influxdb import InfluxDBClient, SeriesHelper
 
-from pyclowder.extractors import Extractor
+from terrautils.extractors import TerrarefExtractor
+import terrautils.extractors
+
 from pyclowder.utils import CheckMessage
 import pyclowder.files
 import pyclowder.datasets
-import terrautils.extractors
 
 import full_day_to_tiles
 import shadeRemoval as shade
 
 
-class FullFieldMosaicStitcher(Extractor):
+def add_local_arguments(parser):
+
+    self.parser.add_argument('--darker', type=bool, default=False,
+            help="whether to use multipass mosiacking to select darker pixels")
+
+    self.parser.add_argument('--split', type=int, default=2,
+            help="number of splits to use if --darker is True")
+
+
+class FullFieldMosaicStitcher(TerrarefExtractor):
+
     def __init__(self):
-        Extractor.__init__(self)
 
-        influx_host = os.getenv("INFLUXDB_HOST", "terra-logging.ncsa.illinois.edu")
-        influx_port = os.getenv("INFLUXDB_PORT", 8086)
-        influx_db = os.getenv("INFLUXDB_DB", "extractor_db")
-        influx_user = os.getenv("INFLUXDB_USER", "terra")
-        influx_pass = os.getenv("INFLUXDB_PASSWORD", "")
+        super(FullFieldMosaicStitcher, self).__init__()
 
-        # add any additional arguments to parser
-        self.parser.add_argument('--output', '-o', dest="output_dir", type=str, nargs='?',
-                                 default="/home/extractor/sites/ua-mac/Level_1/fullfield",
-                                 help="root directory where timestamp & output directories will be created")
-        self.parser.add_argument('--overwrite', dest="force_overwrite", type=bool, nargs='?', default=False,
-                                 help="whether to overwrite output file if it already exists in output directory")
-        self.parser.add_argument('--mainspace', dest="mainspace", type=str, nargs='?',
-                                 default="58da6b924f0c430e2baa823f", help="Space UUID in Clowder to store results")
-        self.parser.add_argument('--darker', dest="generate_darker", type=bool, nargs='?', default=False,
-                                 help="whether to use multipass mosiacking to select darker pixels")
-        self.parser.add_argument('--split', dest="split_num", type=int, nargs='?', default=2,
-                                 help="number of splits to use if --darker is True")
-        self.parser.add_argument('--influxHost', dest="influx_host", type=str, nargs='?',
-                                 default=influx_host, help="InfluxDB URL for logging")
-        self.parser.add_argument('--influxPort', dest="influx_port", type=int, nargs='?',
-                                 default=influx_port, help="InfluxDB port")
-        self.parser.add_argument('--influxUser', dest="influx_user", type=str, nargs='?',
-                                 default=influx_user, help="InfluxDB username")
-        self.parser.add_argument('--influxPass', dest="influx_pass", type=str, nargs='?',
-                                 default=influx_pass, help="InfluxDB password")
-        self.parser.add_argument('--influxDB', dest="influx_db", type=str, nargs='?',
-                                 default=influx_db, help="InfluxDB database")
+        add_local_arguments(self.parser)
 
-        # parse command line and load default logging configuration
+        # parse command line and initialize extractor
         self.setup()
 
-        # setup logging for the exctractor
-        logging.getLogger('pyclowder').setLevel(logging.DEBUG)
-        logging.getLogger('__main__').setLevel(logging.DEBUG)
+        # process local arguments
+        self.generate_darker = self.args.darker
+        self.split = self.args.split
 
-        # assign other arguments
-        self.output_dir = self.args.output_dir
-        self.force_overwrite = self.args.force_overwrite
-        self.mainspace = self.args.mainspace
-        self.generate_darker = self.args.generate_darker
-        self.split_num = self.args.split_num
-        self.influx_params = {
-            "host": self.args.influx_host,
-            "port": self.args.influx_port,
-            "db": self.args.influx_db,
-            "user": self.args.influx_user,
-            "pass": self.args.influx_pass
-        }
 
-    def check_message(self, connector, host, secret_key, resource, parameters):
+    def check_message(self, connector, host, secret_key, 
+                      resource, parameters):
         return CheckMessage.bypass
 
-    def process_message(self, connector, host, secret_key, resource, parameters):
-        starttime = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+
+    def process_message(self, connector, host, secret_key, 
+                        resource, parameters):
+
+        self.start_message()
         created = 0
         bytes = 0
 
-        # parameters["output_dataset"] = "Full Field - 2017-01-01"
-        out_dir = terrautils.extractors.get_output_directory(self.soutput_dir, parameters["output_dataset"])
-        out_root = terrautils.extractors.get_output_filename(parameters["output_dataset"], opts=["fullField"])
-        out_vrt = os.path.join(out_dir, out_root+".vrt")
-        out_tif_full = os.path.join(out_dir, out_root+".tif")
-        out_tif_thumb = os.path.join(out_dir, out_root+"_thumb.tif")
+        # get full path to sensor primary result file
+        out_tif_full = self.get_sensor_path(timestamp)
+        out_dir = os.path.dirname(out_tif_full)
+        out_vrt = self.get_sensor_path(timestamp, ext='.vrt')
+        out_vrt = self.get_sensor_path(timestamp, ext='_thumb.tif')
 
         nu_created, nu_bytes = 0, 0
         if not self.generate_darker:
@@ -121,9 +95,8 @@ class FullFieldMosaicStitcher(Extractor):
         fullmeta = terrautils.extractors.build_metadata(host, self.extractor_info['name'], fullid, content, 'file')
         pyclowder.files.upload_metadata(connector, host, secret_key, thumbid, fullmeta)
 
-        endtime = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
-        terrautils.extractors.log_to_influxdb(self.extractor_info['name'], self.influx_params,
-                                              starttime, endtime, created, bytes)
+        self.end_message(created, bytes)
+
 
     def getCollectionOrCreate(self, connector, host, secret_key, cname, parent_colln=None, parent_space=None):
         # Fetch dataset from Clowder by name, or create it if not found
