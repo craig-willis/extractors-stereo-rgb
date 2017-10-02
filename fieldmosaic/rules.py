@@ -7,6 +7,8 @@ import json
 
 import rule_utils
 from terrautils.sensors import Sensors
+from terrautils.metadata import get_terraref_metadata
+from pyclowder.datasets import download_metadata
 
 
 # setup logging for the exctractor
@@ -61,7 +63,16 @@ def fullFieldMosaicStitcher(extractor, connector, host, secret_key, resource, ru
     if sensor in stitchable_sensors.keys():
         timestamp = dsname.split(" - ")[1]
         date = timestamp.split("__")[0]
-        progress_key = "Full Field -- " + sensor + " - " + date
+        # Get the scan from the metadata so we can include in unique key
+        ds_md = download_metadata(connector, host, secret_key, resource["dataset_info"]["id"])
+        terra_md = get_terraref_metadata(ds_md)
+        if 'gantry_variable_metadata' in terra_md and 'scan_script' in terra_md['gantry_variable_metadata']:
+            target_scan = terra_md['gantry_variable_metadata']['scan_script']
+        else:
+            target_scan = "unknown_scan"
+
+        progress_key = "Full Field -- %s - %s (%s)" % (sensor, date, target_scan)
+        group_key = "Full Field -- %s - %s" % (sensor, date)
 
         # Is there actually a new left geoTIFF to add to the stack?
         target_id = None
@@ -116,21 +127,19 @@ def fullFieldMosaicStitcher(extractor, connector, host, secret_key, resource, ru
                         root_dir = root_dir.replace(source_path, connector.mounted_paths[source_path])
             date_directory = os.path.join(root_dir, date)
             date_directory = ("/"+date_directory if not date_directory.startswith("/") else "")
-
-            raw_file_count = float(subprocess.check_output("ls %s | wc -l" % date_directory,
-                                                           shell=True).strip())
-            logging.info("found %s raw files in %s" % (int(raw_file_count), date_directory))
+            raw_file_count = float(subprocess.check_output("ls %s | wc -l" % date_directory, shell=True).strip())
 
             if raw_file_count == 0:
                 raise Exception("problem communicating with file system")
             else:
                 # If we have enough raw files accounted for and more than min_datasets, trigger
-                prog_pct = (len(progress['ids'])/raw_file_count)*100
+                counts_for_all_scans = float(rule_utils.retrieveQueryCountsFromDB(group_key)["total"])
+                prog_pct = float(counts_for_all_scans/raw_file_count)*100
                 if prog_pct >= tolerance_pct:
                     full_field_ready = True
                 else:
-                    logging.info("found %s/%s necessary geotiffs (%s%%)" % (len(progress['ids']), int(raw_file_count),
-                                                                            "{0:.2f}".format(prog_pct)))
+                    logging.info("found %s/%s (%s%%) necessary geotiffs (%s in this scan)" % (counts_for_all_scans, int(raw_file_count),
+                                                                            "{0:.2f}".format(prog_pct),  len(progress['ids'])))
         for trig_extractor in rulemap["extractors"]:
             results[trig_extractor] = {
                 "process": full_field_ready,
@@ -138,6 +147,7 @@ def fullFieldMosaicStitcher(extractor, connector, host, secret_key, resource, ru
             }
             if full_field_ready:
                 results[trig_extractor]["parameters"]["output_dataset"] = "Full Field - "+date
+                results[trig_extractor]["parameters"]["scan_type"] = target_scan
 
                 # Write output ID list to a text file
                 output_dir = os.path.dirname(sensor_lookup.get_sensor_path(date, 'fullfield'))
