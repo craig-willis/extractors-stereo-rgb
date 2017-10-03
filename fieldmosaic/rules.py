@@ -66,8 +66,17 @@ def fullFieldMosaicStitcher(extractor, connector, host, secret_key, resource, ru
         # Get the scan from the metadata so we can include in unique key
         ds_md = download_metadata(connector, host, secret_key, resource["dataset_info"]["id"])
         terra_md = get_terraref_metadata(ds_md)
-        if 'gantry_variable_metadata' in terra_md and 'scan_script' in terra_md['gantry_variable_metadata']:
-            target_scan = terra_md['gantry_variable_metadata']['scan_script']
+        if 'gantry_variable_metadata' in terra_md and 'script_name' in terra_md['gantry_variable_metadata']:
+            if terra_md['gantry_variable_metadata']["fullfield_eligible"] == "False":
+                # Not full-field scan; no need to trigger anything for now.
+                logging.info("%s is not a full-field eligible scan" % dsname)
+                for trig_extractor in rulemap["extractors"]:
+                    results[trig_extractor] = {
+                        "process": False,
+                        "parameters": {}
+                    }
+                return results
+            target_scan = terra_md['gantry_variable_metadata']['script_name']
         else:
             target_scan = "unknown_scan"
 
