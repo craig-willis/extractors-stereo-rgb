@@ -2,7 +2,6 @@
 
 import os
 import logging
-import requests
 import subprocess
 import json
 
@@ -13,6 +12,8 @@ from terrautils.extractors import TerrarefExtractor, build_metadata, build_datas
 
 import full_day_to_tiles
 import shadeRemoval as shade
+
+
 
 
 def add_local_arguments(parser):
@@ -63,13 +64,16 @@ class FullFieldMosaicStitcher(TerrarefExtractor):
         dataset_name = parameters["output_dataset"]
         timestamp = dataset_name.split(" - ")[1]
 
-        out_tif_full = self.sensors.create_sensor_path(timestamp, opts=[sensor_type, parameters["scan_type"]])
+        if 'scan_type' in parameters:
+            out_tif_full = self.sensors.create_sensor_path(timestamp, opts=[sensor_type, parameters["scan_type"]])
+        else:
+            out_tif_full = self.sensors.create_sensor_path(timestamp, opts=[sensor_type])
         out_tif_thumb = out_tif_full.replace(".tif", "_thumb.tif")
         out_vrt = out_tif_full.replace(".tif", ".vrt")
         out_dir = os.path.dirname(out_vrt)
 
         if os.path.exists(out_vrt) and not self.overwrite:
-            logging.info("%s already exists; ending process" % out_vrt)
+            logging.getLogger(__name__).info("%s already exists; ending process" % out_vrt)
             return
 
         if not self.darker or sensor_type != 'rgb':
@@ -108,11 +112,13 @@ class FullFieldMosaicStitcher(TerrarefExtractor):
         # Create simple mosaic from geotiff list
         created, bytes = 0, 0
 
+        logging.getLogger(__name__).info("Target output directory: %s" % out_dir)
+
         if (not os.path.isfile(out_vrt)) or self.overwrite:
             fileidpath = self.remapMountPath(connector, str(parameters['file_paths']))
             with open(fileidpath) as flist:
                 file_path_list = json.load(flist)
-            logging.info("processing %s TIFs with dark flag" % len(file_path_list))
+            logging.getLogger(__name__).info("Preparing %s TIFs from %s" % (len(file_path_list), str(parameters['file_paths'])))
 
             # Write input list to tmp file
             tiflist = "tiflist.txt"
@@ -122,7 +128,7 @@ class FullFieldMosaicStitcher(TerrarefExtractor):
                     tifftxt.write("%s\n" % filepath)
 
             # Create VRT from every GeoTIFF
-            logging.info("Creating %s..." % out_vrt)
+            logging.getLogger(__name__).info("Creating %s..." % out_vrt)
             full_day_to_tiles.createVrtPermanent(out_dir, tiflist, out_vrt)
             os.remove(tiflist)
             created += 1
@@ -130,17 +136,17 @@ class FullFieldMosaicStitcher(TerrarefExtractor):
 
         if (not os.path.isfile(out_tif_thumb)) or self.overwrite:
             # Convert VRT to full-field GeoTIFF (low-res then high-res)
-            logging.info("Converting VRT to %s..." % out_tif_thumb)
+            logging.getLogger(__name__).info("Converting VRT to %s..." % out_tif_thumb)
 
             cmd = "gdal_translate -projwin -111.9750963 33.0764953 -111.9747967 33.074485715 " + \
-                    "-outsize 10%% 10%% %s %s" % (out_vrt, out_tif_thumb)
+                    "-outsize 4%% 4%% %s %s" % (out_vrt, out_tif_thumb)
             subprocess.call(cmd, shell=True)
             created += 1
             bytes += os.path.getsize(out_tif_thumb)
 
         """
         if (not os.path.isfile(out_tif_full)) or self.overwrite:
-            logging.info("Converting VRT to %s..." % out_tif_full)
+            logging.getLogger(__name__).info("Converting VRT to %s..." % out_tif_full)
             cmd = "gdal_translate -projwin -111.9750963 33.0764953 -111.9747967 33.074485715 " + \
                     "%s %s" % (out_vrt, out_tif_full)
             subprocess.call(cmd, shell=True)
@@ -158,7 +164,7 @@ class FullFieldMosaicStitcher(TerrarefExtractor):
             fileidpath = self.remapMountPath(connector, str(parameters['file_paths']))
             with open(fileidpath) as flist:
                 file_path_list = json.load(flist)
-            logging.info("processing %s TIFs with dark flag" % len(file_path_list))
+            logging.getLogger(__name__).info("processing %s TIFs with dark flag" % len(file_path_list))
 
             # Write input list to tmp file
             tiflist = "tiflist.txt"
@@ -168,7 +174,7 @@ class FullFieldMosaicStitcher(TerrarefExtractor):
                     tifftxt.write("%s\n" % filepath)
 
             # Create VRT from every GeoTIFF
-            logging.info("Creating %s..." % out_vrt)
+            logging.getLogger(__name__).info("Creating %s..." % out_vrt)
             full_day_to_tiles.createVrtPermanent(out_dir, tiflist, out_vrt)
             created += 1
             bytes += os.path.getsize(out_vrt)
@@ -195,14 +201,14 @@ class FullFieldMosaicStitcher(TerrarefExtractor):
 
         if (not os.path.isfile(out_tif_thumb)) or self.overwrite:
             # Convert VRT to full-field GeoTIFF (low-res then high-res)
-            logging.info("Converting VRT to %s..." % out_tif_thumb)
+            logging.getLogger(__name__).info("Converting VRT to %s..." % out_tif_thumb)
             subprocess.call("gdal_translate -projwin -111.9750963 33.0764953 -111.9747967 33.074485715 "+
                              "-outsize 10% 10% %s %s" % (out_vrt, out_tif_thumb), shell=True)
             created += 1
             bytes += os.path.getsize(out_tif_thumb)
 
         if (not os.path.isfile(out_tif_full)) or self.overwrite:
-            logging.info("Converting VRT to %s..." % out_tif_full)
+            logging.getLogger(__name__).info("Converting VRT to %s..." % out_tif_full)
             subprocess.call("gdal_translate -projwin -111.9750963 33.0764953 -111.9747967 33.074485715 "+
                              "%s %s" % (out_vrt, out_tif_full), shell=True)
             created += 1

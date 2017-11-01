@@ -163,7 +163,7 @@ def fullFieldMosaicStitcher(extractor, connector, host, secret_key, resource, ru
                 logging.info("writing %s_file_ids.json to %s" % (sensor, output_dir))
                 if not os.path.exists(output_dir):
                     os.makedirs(output_dir)
-                output_file = os.path.join(output_dir, sensor+"_file_paths.json")
+                output_file = os.path.join(output_dir, sensor+"_"+target_scan+"_file_paths.json")
 
                 # Sort IDs by file path before writing to disk
                 # TODO: Eventually alternate every other image so we have half complete and half "underneath"
