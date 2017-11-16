@@ -3,9 +3,7 @@ import os
 import json
 import tempfile
 import shutil
-import sys
 
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 import bin_to_geotiff as bin2tiff
 
 from terrautils.metadata import clean_metadata
@@ -17,7 +15,7 @@ from terrautils.spatial import geojson_to_tuples
 
 
 test_id = 'aa2ffdb2-4b44-4828-ae3c-9be5698241ca'
-path = os.path.join(os.path.dirname(__file__), test_id)
+path = os.path.join(os.path.dirname(__file__),'test_bin2tif_doc', test_id)
 
 
 class TestBin2tif(unittest.TestCase):
@@ -44,14 +42,15 @@ class TestBin2tif(unittest.TestCase):
         out_tmp_tiff = os.path.join(tempfile.gettempdir(), test_id.encode('utf8'))
         left_image = bin2tiff.process_image(left_shape, img_left, None)
 
-        f = open('../extractor_info.json', 'rb')
+        f = open('extractor_info.json', 'rb')
         extractor_info = json.load(f)
         f.close()
 
         create_geotiff(left_image, left_gps_bounds, out_tmp_tiff, None, False, extractor_info, metadata)
-        shutil.move(out_tmp_tiff, os.path.dirname(__file__)+'/test_result.tif')
 
-        self.assertTrue(os.path.isfile(os.path.dirname(__file__) + '/test_result.tif'))
+        shutil.move(out_tmp_tiff, path + '_test_result.tif')
+
+        self.assertTrue(os.path.isfile(path + '_test_result.tif'))
 
 
 if __name__ == '__main__':
